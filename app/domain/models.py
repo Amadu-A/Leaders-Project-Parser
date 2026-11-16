@@ -3,6 +3,7 @@
 
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from decimal import Decimal
 
 TERMINAL = {"completed", "completed_with_errors", "failed", "cancelled"}
 RUNNING = {"queued", "discovering", "processing", "cooldown"}
@@ -22,6 +23,7 @@ class Listing:
     inn: str
     detail_url: str
     ordinal: int = 0
+    revenue_mln: Decimal | None = None
 
 
 @dataclass
@@ -40,6 +42,7 @@ class Detail:
     inn: str
     director: str = ""
     director_status: str = "missing"
+    kpp: str = ""
 
 
 @dataclass

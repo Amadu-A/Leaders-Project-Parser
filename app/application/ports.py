@@ -92,6 +92,30 @@ class CollectorStore(Protocol):
         """Завершает только полностью просмотренный список с честным статусом."""
         ...
 
+    async def revenue_pending(self, job_id: str) -> int:
+        """Считает непроверенную выручку старых записей."""
+        ...
+
+    async def initial_catalogue_url(self, job_id: str) -> str | None:
+        """Читает первый checkpoint без сброса текущего."""
+        ...
+
+    async def complete_revenue_backfill(self, job_id: str) -> None:
+        """Фиксирует окончание отдельного прохода."""
+        ...
+
+    async def save_revenue_backfill(self, job_id: str, url: str, page: CatalogPage) -> None:
+        """Сохраняет только новые поля и отдельный cursor."""
+        ...
+
+    async def next_kpp_company(self, job_id: str) -> dict | None:
+        """Выбирает непроверенный КПП."""
+        ...
+
+    async def save_kpp(self, company_id: int, kpp: str, attempts: int) -> None:
+        """Не изменяет остальные данные компании."""
+        ...
+
 
 class Source(Protocol):
     """Источник публичных JSON/HTML-документов с общей политикой доступа и limiter."""
@@ -118,4 +142,8 @@ class Parsers(Protocol):
 
     def contacts(self, html: str) -> Contacts:
         """Возвращает все доступные контакты одной компании."""
+        ...
+
+    def kpp(self, html: str, expected_inn: str) -> str:
+        """Извлекает только реквизиты при дозаполнении."""
         ...

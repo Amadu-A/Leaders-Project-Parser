@@ -1,9 +1,6 @@
 # app/api/main.py
-"""Тонкий HTTP transport: авторизация, CSRF, Jinja UI и application endpoints."""
+"""Тонкий HTTP transport без авторизации: CSRF, Jinja UI и application endpoints."""
 
-import base64
-import binascii
-import secrets
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
@@ -40,9 +37,7 @@ def create_app(settings: Settings | None = None, repository=None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(application):
-        """Проверяет обязательные credentials и закрывает пул при завершении API."""
-        if len(settings.app_password.get_secret_value()) < 16:
-            raise RuntimeError("APP_PASSWORD must contain at least 16 characters")
+        """Собирает зависимости и закрывает пул при завершении API."""
         configure_logging(settings.log_level)
         engine = None
         if repository is None:
@@ -65,35 +60,17 @@ def create_app(settings: Settings | None = None, repository=None) -> FastAPI:
 
     @application.middleware("http")
     async def security(request: Request, call_next):
-        """Защищает UI/API Basic Auth и custom-header CSRF; health не раскрывает данные."""
-        if request.url.path not in {"/health", "/ready"}:
-            valid = False
-            auth = request.headers.get("authorization", "")
-            if auth.startswith("Basic "):
-                try:
-                    username, password = (
-                        base64.b64decode(auth[6:], validate=True).decode().split(":", 1)
-                    )
-                    valid = secrets.compare_digest(
-                        username.encode(), settings.app_username.encode()
-                    ) & secrets.compare_digest(
-                        password.encode(), settings.app_password.get_secret_value().encode()
-                    )
-                except (ValueError, UnicodeError, binascii.Error):
-                    pass
-            if not valid:
-                return Response(
-                    status_code=401, headers={"WWW-Authenticate": 'Basic realm="Leaders Parser"'}
-                )
-            if request.method in {"POST", "DELETE", "PUT", "PATCH"}:
-                origin = request.headers.get("origin")
-                if request.headers.get("x-requested-with") != "LeadersParser" or (
-                    origin and origin != str(request.base_url).rstrip("/")
-                ):
-                    return JSONResponse(
-                        {"detail": "Запрос отклонён проверкой CSRF"}, status_code=403
-                    )
-        response = await call_next(request)
+        """Сохраняет CSRF и защитные заголовки; логин и пароль не требуются."""
+        origin = request.headers.get("origin")
+        invalid = request.method in {"POST", "DELETE", "PUT", "PATCH"} and (
+            request.headers.get("x-requested-with") != "LeadersParser"
+            or (origin and origin != str(request.base_url).rstrip("/"))
+        )
+        response = (
+            JSONResponse({"detail": "Запрос отклонён проверкой CSRF"}, status_code=403)
+            if invalid
+            else await call_next(request)
+        )
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Referrer-Policy"] = "same-origin"
         response.headers["Content-Security-Policy"] = (
@@ -158,7 +135,7 @@ def create_app(settings: Settings | None = None, repository=None) -> FastAPI:
     @application.post("/api/jobs/{job_id}/{action}")
     async def control(job_id: UUID, action: str, jobs: JobService):
         """Делегирует pause/resume/cancel/retry-failed общему application сценарию."""
-        if action not in {"pause", "resume", "cancel", "retry-failed"}:
+        if action not in {"pause", "resume", "cancel", "retry-failed", "backfill-fields"}:
             raise NotFound("Действие не найдено")
         return await jobs.control(str(job_id), action)
 

@@ -4,6 +4,7 @@
 import tempfile
 import threading
 import time
+from decimal import Decimal
 from io import BytesIO
 
 import psutil
@@ -21,6 +22,8 @@ def company(number=1):
         "ordinal": number,
         "name": '=HYPERLINK("https://evil.test")',
         "inn": "0012345678",
+        "kpp": "001201001",
+        "revenue_mln": Decimal("962900.125"),
         "director": "+ИВАНОВ ИВАН",
         "phones": ["+78001112233", "+78004445566"],
         "emails": ["one@example.test", "two@example.test"],
@@ -47,6 +50,8 @@ def test_xlsx_preserves_every_value_without_temp_files(monkeypatch):
         "№",
         "Наименование",
         "ИНН",
+        "КПП",
+        "Выручка (млн ₽)",
         "ФИО руководителя",
         "Телефон",
         "Почта",
@@ -54,11 +59,15 @@ def test_xlsx_preserves_every_value_without_temp_files(monkeypatch):
     ]
     assert sheet["B2"].data_type == sheet["C2"].data_type == sheet["D2"].data_type == "s"
     assert sheet["C2"].value == "0012345678"
-    assert sheet["E2"].value == "+78001112233\n+78004445566"
-    assert sheet["F2"].value == "one@example.test\ntwo@example.test"
-    assert sheet["G2"].hyperlink.target == "https://example.test"
-    assert sheet.freeze_panes == "A2" and sheet.auto_filter.ref == "A1:G2"
-    assert sheet["E2"].alignment.wrap_text
+    assert sheet["D2"].value == "001201001"
+    assert sheet["E2"].value == 962900.125 and sheet["E2"].data_type == "n"
+    assert sheet["E2"].number_format == "#,##0.########"
+    assert sheet["F2"].data_type == "s"
+    assert sheet["G2"].value == "+78001112233\n+78004445566"
+    assert sheet["H2"].value == "one@example.test\ntwo@example.test"
+    assert sheet["I2"].hyperlink.target == "https://example.test"
+    assert sheet.freeze_panes == "A2" and sheet.auto_filter.ref == "A1:I2"
+    assert sheet["G2"].alignment.wrap_text
 
 
 def test_incomplete_and_multiple_websites():
@@ -67,7 +76,7 @@ def test_incomplete_and_multiple_websites():
     row["contacts_status"] = "pending"
     row["websites"] = ["https://one.test", "https://two.test"]
     book = load_workbook(BytesIO(build_workbook([row], [])))
-    assert book["Компании"]["G2"].value == "https://one.test\nhttps://two.test"
+    assert book["Компании"]["I2"].value == "https://one.test\nhttps://two.test"
     assert "Ошибки" in book.sheetnames and book["Ошибки"].max_row == 2
 
 

@@ -3,8 +3,10 @@
 
 import json
 import re
+from decimal import Decimal
 
 from app.domain.models import CatalogPage, Contacts, Detail, Listing, SourceError, StructureError
+from app.infrastructure.parsers.finance import rubles_to_millions
 from app.infrastructure.parsers.normalization import (
     email,
     official_site,
@@ -18,7 +20,7 @@ from app.infrastructure.source_urls import catalogue_api_url, next_catalogue_api
 def catalog(raw: str, url: str) -> CatalogPage:
     """Читает items/total/nextCursor и сохраняет все найденные карточки по порядку."""
     try:
-        data = json.loads(raw)
+        data = json.loads(raw, parse_float=Decimal)
     except (ValueError, TypeError) as error:
         raise StructureError("Публичный каталог вернул некорректный JSON") from error
     if (
@@ -45,7 +47,14 @@ def catalog(raw: str, url: str) -> CatalogPage:
         if not re.fullmatch(r"https://leaders-project\.ru/companies/\d{10,12}", detail_url):
             raise StructureError("Публичный каталог вернул некорректный URL карточки")
         if detail_url not in seen:
-            companies.append(Listing(" ".join(item["name"].split()), item["inn"], detail_url))
+            companies.append(
+                Listing(
+                    " ".join(item["name"].split()),
+                    item["inn"],
+                    detail_url,
+                    revenue_mln=rubles_to_millions(item.get("revenue")),
+                )
+            )
             seen.add(detail_url)
     if not companies and (cursor is not None or data["total"] > 0):
         raise StructureError("Публичный каталог пуст до подтверждённого окончания")
@@ -73,6 +82,7 @@ def detail(raw: str, expected_inn: str) -> Detail:
     data = company(raw, {"inn", "leaders"})
     if data["inn"] != expected_inn:
         raise SourceError("ИНН карточки отличается от ИНН каталога", "inn_mismatch")
+    code = kpp(raw, expected_inn)
     if not isinstance(data["leaders"], list):
         raise StructureError("Изменилась схема руководителей")
     for leader in data["leaders"]:
@@ -91,8 +101,21 @@ def detail(raw: str, expected_inn: str) -> Detail:
             continue
         # В JSON leaders отделён от founders: сама категория явно обозначает руководство.
         if name.strip():
-            return Detail(data["inn"], " ".join(name.split()), "ok")
-    return Detail(data["inn"])
+            return Detail(data["inn"], " ".join(name.split()), "ok", kpp=code)
+    return Detail(data["inn"], kpp=code)
+
+
+def kpp(raw: str, expected_inn: str) -> str:
+    """Проверяет реквизиты для дозаполнения, не обрабатывая руководителя и контакты."""
+    data = company(raw, {"inn"})
+    if data["inn"] != expected_inn:
+        raise SourceError("ИНН карточки отличается от ИНН каталога", "inn_mismatch")
+    value = data.get("kpp")
+    if value is None:
+        return ""
+    if not isinstance(value, str):
+        raise StructureError("КПП API должен быть строкой")
+    return value.strip()
 
 
 def website(value: str) -> str:

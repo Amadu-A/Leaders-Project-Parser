@@ -1,7 +1,7 @@
 # tests/test_api.py
 """Контракт API: авторизация, CSRF, идемпотентное управление и memory download."""
 
-import base64
+from decimal import Decimal
 from io import BytesIO
 
 import httpx
@@ -9,24 +9,24 @@ from openpyxl import load_workbook
 
 from app.api.main import create_app
 from app.config import Settings
-from app.domain.models import CatalogPage, Listing
+from app.domain.models import CatalogPage, Detail, Listing
 
 
 async def test_api_full_lifecycle(repository):
     """Проверяет реальный routing с изолированным repository, без worker-сайта."""
-    settings = Settings(_env_file=None, app_password="test-password-is-long-enough")
+    settings = Settings(_env_file=None)
     app = create_app(settings, repository)
-    token = base64.b64encode(b"operator:test-password-is-long-enough").decode()
     async with app.router.lifespan_context(app):
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app), base_url="http://test"
         ) as client:
             assert (await client.get("/health")).status_code == 200
             assert (await client.get("/ready")).status_code == 200
-            assert (await client.get("/")).status_code == 401
-            client.headers["Authorization"] = "Basic " + token
             page = await client.get("/")
             assert page.status_code == 200 and "Leaders Project Parser" in page.text
+            assert "WWW-Authenticate" not in page.headers
+            assert (await client.get("/static/js/dashboard.js")).status_code == 200
+            assert (await client.get("/api/jobs/latest")).status_code == 200
             assert "frame-ancestors 'none'" in page.headers["content-security-policy"]
             assert (await client.post("/api/jobs")).status_code == 403
             client.headers["X-Requested-With"] = "LeadersParser"
@@ -46,6 +46,7 @@ async def test_api_full_lifecycle(repository):
                             "Тестовая компания",
                             "0012345678",
                             "https://leaders-project.ru/companies/0012345678",
+                            revenue_mln=Decimal("1500.25"),
                         )
                     ],
                     None,
@@ -56,6 +57,10 @@ async def test_api_full_lifecycle(repository):
                 await client.get(path + "/companies", params={"q": "001234", "size": 1})
             ).json()
             assert results["total"] == 1 and results["items"][0]["inn"] == "0012345678"
+            assert results["items"][0]["revenue_mln"] == 1500.25
+            row = await repository.next_company(job["id"])
+            await repository.save_result(row["id"], "detail", Detail(row["inn"], kpp="001234567"))
+            assert (await client.get(path + "/companies")).json()["items"][0]["kpp"] == "001234567"
             assert (await client.get(path + "/companies?size=37000")).status_code == 422
             assert (await client.get("/api/jobs/not-a-uuid")).status_code == 422
             assert (await client.delete(path)).status_code == 409
@@ -87,7 +92,7 @@ async def test_readiness_failure_is_redacted():
             """Выбрасывает ошибку, содержимое которой нельзя отдавать пользователю."""
             raise RuntimeError("postgres://secret:password@host")
 
-    app = create_app(Settings(_env_file=None, app_password="long-test-password"), BrokenStore())
+    app = create_app(Settings(_env_file=None), BrokenStore())
     async with app.router.lifespan_context(app):
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app), base_url="http://test"

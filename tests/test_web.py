@@ -34,9 +34,7 @@ async def dashboard_flow(database_url):
     async with engine.begin() as connection:
         await connection.run_sync(Base.metadata.create_all)
     repository = Repository(sessions)
-    settings = Settings(
-        _env_file=None, app_password="ui-test-password-long-enough", status_poll_interval=1
-    )
+    settings = Settings(_env_file=None, status_poll_interval=1)
     job = await repository.create_job(settings.source_url)
     companies = [
         Listing(
@@ -68,12 +66,7 @@ async def dashboard_flow(database_url):
             await asyncio.sleep(0.01)
         async with async_playwright() as playwright:
             browser = await playwright.chromium.launch()
-            context = await browser.new_context(
-                http_credentials={
-                    "username": "operator",
-                    "password": "ui-test-password-long-enough",
-                }
-            )
+            context = await browser.new_context()
             page = await context.new_page()
             errors = []
             page.on("pageerror", lambda error: errors.append(str(error)))

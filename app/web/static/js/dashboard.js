@@ -16,11 +16,12 @@ function render(job) {
   for (const button of document.querySelectorAll("[data-action]")) {
     const action=button.dataset.action, key=action === "retry-failed" ? "retry" : action;
     button.disabled=busy || !allowed[key];
-    if (["delete","retry-failed"].includes(action)) button.hidden=!allowed[key];
+    if (["delete","retry-failed","backfill-fields"].includes(action)) button.hidden=!allowed[key];
   }
   if (!job) return;
-  find("[data-status]").textContent=statusNames[job.status] || job.status;
-  find("[data-status]").className=`badge${job.status === "completed" ? " badge--ok" : job.errors ? " badge--error" : " badge--active"}`;
+  find("[data-status]").textContent=job.status === "completed" && job.fields_pending ? "Доступно дозаполнение" : statusNames[job.status] || job.status;
+  find("[data-status]").className=`badge${job.status === "completed" && !job.fields_pending ? " badge--ok" : job.errors ? " badge--error" : " badge--active"}`;
+  find("[data-fields-progress]").textContent=job.fields_pending ? `КПП / выручка: осталось ${job.fields_pending.toLocaleString("ru-RU")} организаций. Основной прогресс сохранён.` : "КПП и выручка проверены для найденных организаций";
   find("[data-stage]").textContent=stageNames[job.stage] || job.stage;
   find("[data-last-success]").textContent=job.last_success || "Ожидание worker";
   for (const metric of document.querySelectorAll("[data-metric]")) metric.textContent=job[metric.dataset.metric].toLocaleString("ru-RU");

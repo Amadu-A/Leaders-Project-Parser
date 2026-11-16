@@ -8,6 +8,7 @@ from bs4 import BeautifulSoup, Tag
 
 from app.domain.models import CatalogPage, Contacts, Detail, Listing, SourceError, StructureError
 from app.infrastructure.parsers import public_api
+from app.infrastructure.parsers.finance import displayed_revenue
 from app.infrastructure.parsers.normalization import (
     LEADER_ROLES,
     email,
@@ -58,7 +59,7 @@ def catalog(html: str, url: str) -> CatalogPage:
                     raise StructureError("Не удалось однозначно определить ИНН строки каталога")
                 inn = found[0]
                 break
-        companies.append(Listing(name, inn, detail_url))
+        companies.append(Listing(name, inn, detail_url, revenue_mln=_catalogue_revenue(anchor)))
     if not companies:
         raise StructureError("В каталоге нет карточек: нужен JavaScript или изменена разметка")
 
@@ -114,13 +115,36 @@ def catalog(html: str, url: str) -> CatalogPage:
     return CatalogPage(companies, next_url, total)
 
 
-def detail(html: str, expected_inn: str) -> Detail:
-    """Проверяет ИНН в реквизитах и исключает учредителей из руководителя."""
-    if html.lstrip().startswith("{"):
-        return public_api.detail(html, expected_inn)
-    soup = BeautifulSoup(html, "html.parser")
+def _catalogue_revenue(anchor):
+    """Берёт соседний основной span, не значения годов или процент изменения графика."""
+    for ancestor in anchor.parents:
+        if ancestor.name in {"main", "body", "html"}:
+            break
+        links = {
+            a.get("href")
+            for a in ancestor.select("a[href]")
+            if re.fullmatch(
+                r"(?:https://leaders-project\.ru)?/companies/\d{10,12}/?", a.get("href", "")
+            )
+        }
+        if len(links) > 1:
+            break
+        chart = ancestor.find(attrs={"aria-label": re.compile(r"^Выручка\s*:", re.I)})
+        if chart:
+            value = chart.parent.find("span", recursive=False)
+            if value is None:
+                raise StructureError("У графика выручки отсутствует текущее значение")
+            return displayed_revenue(text(value))
+        for block in ancestor.find_all("div", recursive=False):
+            value = block.find("span", recursive=False)
+            if value and ("₽" in text(value) or text(value).casefold() == "нет данных"):
+                return displayed_revenue(text(value))
+    return None
+
+
+def _requisites(soup, expected_inn):
+    """Возвращает только ИНН и КПП из текущего блока реквизитов."""
     requisites = soup.select_one("section#a-requisites")
-    leaders = soup.select_one("section#a-leaders")
     if requisites is None:
         raise StructureError("Отсутствует ожидаемый раздел реквизитов")
     inn = ""
@@ -136,6 +160,29 @@ def detail(html: str, expected_inn: str) -> Detail:
         raise StructureError("Реквизит ИНН не найден")
     if inn != expected_inn:
         raise SourceError("ИНН карточки отличается от ИНН каталога", "inn_mismatch")
+    code = ""
+    for label in requisites.find_all(["span", "dt", "div"]):
+        if text(label) == "КПП":
+            match = re.search(r"\b\d{9}\b", text(label.parent))
+            code = match[0] if match else ""
+            break
+    return inn, code
+
+
+def kpp(html: str, expected_inn: str) -> str:
+    """Дозаполняет КПП без проверки или перезаписи остальных полей карточки."""
+    if html.lstrip().startswith("{"):
+        return public_api.kpp(html, expected_inn)
+    return _requisites(BeautifulSoup(html, "html.parser"), expected_inn)[1]
+
+
+def detail(html: str, expected_inn: str) -> Detail:
+    """Проверяет реквизиты и исключает учредителей из руководителя."""
+    if html.lstrip().startswith("{"):
+        return public_api.detail(html, expected_inn)
+    soup = BeautifulSoup(html, "html.parser")
+    inn, code = _requisites(soup, expected_inn)
+    leaders = soup.select_one("section#a-leaders")
     if leaders is None:
         raise StructureError("Отсутствует ожидаемый раздел руководства")
     for label in leaders.find_all(["div", "span", "dt", "h2", "h3"]):
@@ -151,8 +198,8 @@ def detail(html: str, expected_inn: str) -> Detail:
             continue
         sibling = label.find_next_sibling(["div", "span", "dd"])
         if sibling and text(sibling) and "учредител" not in text(sibling).lower():
-            return Detail(inn, text(sibling), "ok")
-    return Detail(inn)
+            return Detail(inn, text(sibling), "ok", kpp=code)
+    return Detail(inn, kpp=code)
 
 
 def contacts(html: str) -> Contacts:

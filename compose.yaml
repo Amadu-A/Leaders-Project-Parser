@@ -17,8 +17,6 @@ x-app: &app
     POSTGRES_DB: ${POSTGRES_DB:-leaders_parser}
     POSTGRES_USER: ${POSTGRES_USER:-leaders_parser}
     POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
-    APP_PASSWORD: ${APP_PASSWORD:?Set APP_PASSWORD in .env}
-    APP_USERNAME: ${APP_USERNAME:-operator}
     DATABASE_URL: ${DATABASE_URL:-}
     SOURCE_URL: ${SOURCE_URL:-https://leaders-project.ru/companies/projecting?size=100}
     SOURCE_MODE: ${SOURCE_MODE:-auto}

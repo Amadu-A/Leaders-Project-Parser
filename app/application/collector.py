@@ -3,6 +3,7 @@
 
 from time import perf_counter
 
+from app.application.backfill import FieldBackfill
 from app.application.ports import CollectorStore, Parsers, Source
 from app.domain.models import CatalogPage, Interrupted, SourceError, StructureError
 
@@ -17,12 +18,14 @@ class Collector:
         parsers: Parsers,
         checkpoint,
         probe_count: int = 0,
+        catalogue_url: str | None = None,
     ):
         """Внедряет инфраструктуру через контракты и проверку пользовательской остановки."""
         self.repository, self.source, self.parsers = repository, source, parsers
         self.checkpoint = checkpoint
         self.preflight_done = set()
         self.probe_count = probe_count
+        self.backfill = FieldBackfill(repository, source, parsers, checkpoint, catalogue_url)
 
     async def _probe(self, url: str) -> CatalogPage:
         """Проверяет 3 карточки до массового индекса; результаты пробы не выдаются за сбор."""
@@ -85,9 +88,13 @@ class Collector:
                     job_id, None, error.url or job["next_url"], "discovering", error
                 )
             return
+        if await self.backfill.revenue(job):
+            return
         await self.repository.set_stage(job_id, "processing")
         company = await self.repository.next_company(job_id)
         if company is None:
+            if await self.backfill.kpp(job):
+                return
             await self.repository.finish(job_id)
             return
         started = perf_counter()

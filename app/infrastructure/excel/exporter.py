@@ -35,14 +35,27 @@ def build_workbook(rows, issues: list[dict]) -> bytes:
             }
         )
         cell = workbook.add_format({"text_wrap": True, "valign": "top", "num_format": "@"})
+        money = workbook.add_format(
+            {"text_wrap": True, "valign": "top", "num_format": "#,##0.########"}
+        )
         link = workbook.add_format(
             {"text_wrap": True, "valign": "top", "font_color": "#15345B", "underline": 1}
         )
         sheet = workbook.add_worksheet("Компании")
-        headers = ["№", "Наименование", "ИНН", "ФИО руководителя", "Телефон", "Почта", "Сайт"]
+        headers = [
+            "№",
+            "Наименование",
+            "ИНН",
+            "КПП",
+            "Выручка (млн ₽)",
+            "ФИО руководителя",
+            "Телефон",
+            "Почта",
+            "Сайт",
+        ]
         sheet.write_row(0, 0, headers, header)
         sheet.set_row(0, 32)
-        widths = [7, 48, 16, 36, 25, 32, 38]
+        widths = [7, 48, 16, 16, 22, 36, 25, 32, 38]
         for index, width in enumerate(widths):
             sheet.set_column(index, index, width)
         errors = list(issues)
@@ -56,6 +69,8 @@ def build_workbook(rows, issues: list[dict]) -> bytes:
                 company["ordinal"],
                 company["name"],
                 company["inn"],
+                company.get("kpp", ""),
+                company.get("revenue_mln"),
                 company.get("director", ""),
                 "\n".join(phones),
                 "\n".join(emails),
@@ -63,6 +78,12 @@ def build_workbook(rows, issues: list[dict]) -> bytes:
             ]
             sheet.write_number(count, 0, values[0], cell)
             for column, value in enumerate(values[1:], 1):
+                if column == 4:
+                    if value is not None:
+                        sheet.write_number(count, column, float(value), money)
+                    else:
+                        sheet.write_blank(count, column, None, money)
+                    continue
                 # write_string сохраняет даже строки, начинающиеся с = + - @ и tab.
                 if len(str(value)) > 32767:
                     raise Conflict("Значение превышает предел ячейки Excel 32767 символов")
@@ -72,9 +93,9 @@ def build_workbook(rows, issues: list[dict]) -> bytes:
                 and sites[0].startswith(("https://", "http://"))
                 and len(sites[0]) <= 2079
             ):
-                sheet.write_url(count, 6, sites[0], link, string=sites[0])
+                sheet.write_url(count, 8, sites[0], link, string=sites[0])
             lines = max(
-                wrapped_lines(str(value), width)
+                wrapped_lines(str(value) if value is not None else "", width)
                 for value, width in zip(values[1:], widths[1:], strict=True)
             )
             sheet.set_row(count, min(409, max(36, 15 * (lines + 1))))
@@ -82,6 +103,8 @@ def build_workbook(rows, issues: list[dict]) -> bytes:
                 company.get("detail_status") not in SUCCESS
                 or company.get("contacts_status") not in SUCCESS
                 or company.get("inn_conflict")
+                or company.get("kpp_status", "missing") not in SUCCESS
+                or company.get("revenue_status", "missing") not in SUCCESS
             ) and company.get("id") not in company_issues:
                 errors.append(
                     {
@@ -93,7 +116,7 @@ def build_workbook(rows, issues: list[dict]) -> bytes:
                     }
                 )
         sheet.freeze_panes(1, 0)
-        sheet.autofilter(0, 0, count, 6)
+        sheet.autofilter(0, 0, count, 8)
         if errors:
             error_sheet = workbook.add_worksheet("Ошибки")
             error_sheet.write_row(

@@ -2,8 +2,20 @@
 """ORM PostgreSQL: задания, компании, checkpoints, ошибки и состояние worker."""
 
 from datetime import datetime
+from decimal import Decimal
 
-from sqlalchemy import JSON, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint
+from sqlalchemy import (
+    JSON,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    Numeric,
+    String,
+    Text,
+    UniqueConstraint,
+    text,
+)
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 from app.domain.models import utcnow
@@ -25,6 +37,12 @@ class Job(Base):
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
     next_url: Mapped[str | None] = mapped_column(Text)
+    source_url: Mapped[str | None] = mapped_column(Text)
+    revenue_backfill_next_url: Mapped[str | None] = mapped_column(Text)
+    revenue_backfill_complete: Mapped[bool] = mapped_column(
+        default=False, server_default=text("false")
+    )
+    revenue_backfill_pages: Mapped[int] = mapped_column(default=0, server_default="0")
     pages: Mapped[int] = mapped_column(default=0)
     expected_total: Mapped[int | None]
     discovery_complete: Mapped[bool] = mapped_column(default=False)
@@ -50,6 +68,13 @@ class Company(Base):
     ordinal: Mapped[int]
     name: Mapped[str] = mapped_column(Text)
     inn: Mapped[str] = mapped_column(String(32))
+    kpp: Mapped[str] = mapped_column(String(32), default="", server_default="")
+    revenue_mln: Mapped[Decimal | None] = mapped_column(Numeric(26, 8))
+    kpp_status: Mapped[str] = mapped_column(String(32), default="pending", server_default="pending")
+    revenue_status: Mapped[str] = mapped_column(
+        String(32), default="pending", server_default="pending"
+    )
+    kpp_attempts: Mapped[int] = mapped_column(default=0, server_default="0")
     director: Mapped[str] = mapped_column(Text, default="")
     director_status: Mapped[str] = mapped_column(String(32), default="unchecked")
     phones: Mapped[list] = mapped_column(JSON, default=list)
@@ -67,6 +92,17 @@ class PageCheckpoint(Base):
     """Фиксирует обработанные URL и fingerprint списка для обнаружения циклов."""
 
     __tablename__ = "catalog_pages"
+    __table_args__ = (UniqueConstraint("job_id", "url"), UniqueConstraint("job_id", "fingerprint"))
+    id: Mapped[int] = mapped_column(primary_key=True)
+    job_id: Mapped[str] = mapped_column(ForeignKey("jobs.id", ondelete="CASCADE"), index=True)
+    url: Mapped[str] = mapped_column(Text)
+    fingerprint: Mapped[str] = mapped_column(String(64))
+
+
+class RevenueBackfillPage(Base):
+    """Отдельный журнал прохода выручки, не меняющий checkpoints индексации."""
+
+    __tablename__ = "revenue_backfill_pages"
     __table_args__ = (UniqueConstraint("job_id", "url"), UniqueConstraint("job_id", "fingerprint"))
     id: Mapped[int] = mapped_column(primary_key=True)
     job_id: Mapped[str] = mapped_column(ForeignKey("jobs.id", ondelete="CASCADE"), index=True)

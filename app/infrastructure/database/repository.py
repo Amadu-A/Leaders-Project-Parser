@@ -23,12 +23,14 @@ from app.domain.models import (
     StructureError,
     utcnow,
 )
+from app.infrastructure.database.field_backfill import FieldBackfillRepository
 from app.infrastructure.database.models import (
     Company,
     Event,
     Issue,
     Job,
     PageCheckpoint,
+    RevenueBackfillPage,
     WorkerState,
 )
 
@@ -38,7 +40,7 @@ def snapshot(row) -> dict:
     return {column.key: getattr(row, column.key) for column in row.__table__.columns}
 
 
-class Repository:
+class Repository(FieldBackfillRepository):
     """Хранит результаты и обеспечивает идемпотентность на уровне БД."""
 
     def __init__(self, sessions: async_sessionmaker[AsyncSession]) -> None:
@@ -58,7 +60,7 @@ class Repository:
                 current = await session.scalar(select(Job).where(Job.slot == 1))
                 if current:
                     return snapshot(current)
-                job = Job(id=str(uuid4()), next_url=source_url)
+                job = Job(id=str(uuid4()), next_url=source_url, source_url=source_url)
                 session.add(job)
                 await session.flush()
                 session.add(Event(job_id=job.id, message="Задание создано"))
@@ -100,14 +102,44 @@ class Repository:
                     job.status = "queued"
                 elif action == "cancel" and job.status not in TERMINAL:
                     job.status, job.slot, job.finished_at = "cancelled", None, utcnow()
-                elif action == "retry-failed":
-                    if job.status in {"completed_with_errors", "failed"}:
+                elif action in {"retry-failed", "backfill-fields"}:
+                    allowed = (
+                        {"completed_with_errors", "failed"}
+                        if action == "retry-failed"
+                        else {"completed", "completed_with_errors", "failed"}
+                    )
+                    if action == "backfill-fields" and not job.discovery_complete:
+                        raise Conflict("Сначала завершите индексацию текущего задания")
+                    if job.status in allowed:
                         job.slot, job.status, job.finished_at = 1, "queued", None
-                        for field in (Company.detail_status, Company.contacts_status):
+                        fields = (
+                            (Company.detail_status, Company.contacts_status, Company.kpp_status)
+                            if action == "retry-failed"
+                            else (Company.kpp_status,)
+                        )
+                        for field in fields:
                             await session.execute(
                                 update(Company)
                                 .where(Company.job_id == job_id, field.in_(["error", "not_found"]))
                                 .values({field.key: "pending"})
+                            )
+                        await session.execute(
+                            update(Company)
+                            .where(Company.job_id == job_id, Company.revenue_status == "error")
+                            .values(revenue_status="pending")
+                        )
+                        if await session.scalar(
+                            select(Company.id)
+                            .where(Company.job_id == job_id, Company.revenue_status == "pending")
+                            .limit(1)
+                        ):
+                            job.revenue_backfill_complete = False
+                            job.revenue_backfill_next_url = None
+                            job.revenue_backfill_pages = 0
+                            await session.execute(
+                                delete(RevenueBackfillPage).where(
+                                    RevenueBackfillPage.job_id == job_id
+                                )
                             )
                     elif job.status not in RUNNING:
                         raise Conflict("Повтор ошибок доступен после завершения")
@@ -121,6 +153,7 @@ class Repository:
                             "resume": "Продолжение задания",
                             "cancel": "Задание остановлено",
                             "retry-failed": "Повтор ошибок запрошен",
+                            "backfill-fields": "Запрошено дозаполнение новых полей",
                         }[action],
                     )
                 )
@@ -192,6 +225,18 @@ class Repository:
             )
             for item in page.companies:
                 if item.detail_url in known:
+                    await session.execute(
+                        update(Company)
+                        .where(
+                            Company.job_id == job_id,
+                            Company.detail_url == item.detail_url,
+                            Company.revenue_status == "pending",
+                        )
+                        .values(
+                            revenue_mln=item.revenue_mln,
+                            revenue_status="ok" if item.revenue_mln is not None else "missing",
+                        )
+                    )
                     continue
                 ordinal += 1
                 conflicts = (
@@ -206,6 +251,8 @@ class Repository:
                     inn=item.inn,
                     detail_url=item.detail_url,
                     inn_conflict=bool(conflicts),
+                    revenue_mln=item.revenue_mln,
+                    revenue_status="ok" if item.revenue_mln is not None else "missing",
                 )
                 session.add(company)
                 await session.flush()
@@ -287,6 +334,9 @@ class Repository:
                 company.director, company.director_status = result.director, result.director_status
                 company.detail_status = "ok"
                 company.detail_attempts += attempts
+                company.kpp = result.kpp
+                company.kpp_status = "ok" if result.kpp else "missing"
+                company.kpp_attempts += attempts
             else:
                 company.phones, company.emails = result.phones, result.emails
                 company.websites, company.contacts_status = result.websites, result.status
@@ -294,7 +344,10 @@ class Repository:
             company.updated_at = utcnow()
             await session.execute(
                 update(Issue)
-                .where(Issue.company_id == company_id, Issue.stage == stage)
+                .where(
+                    Issue.company_id == company_id,
+                    Issue.stage.in_(["detail", "kpp"] if stage == "detail" else [stage]),
+                )
                 .values(resolved=True)
             )
             job = await session.get(Job, company.job_id, with_for_update=True)
@@ -338,12 +391,14 @@ class Repository:
             if error.pause or company_id is None:
                 if job.status in RUNNING:
                     job.status = "paused"
-            if company_id and stage in {"detail", "contacts"}:
+            if company_id and stage in {"detail", "contacts", "kpp"}:
                 company = await session.get(Company, company_id, with_for_update=True)
                 if not error.pause:
                     setattr(
                         company, f"{stage}_status", "not_found" if error.status == 404 else "error"
                     )
+                    if stage == "detail" and company.kpp_status == "pending":
+                        company.kpp_status = "not_found" if error.status == 404 else "error"
                 setattr(
                     company,
                     f"{stage}_attempts",
@@ -354,6 +409,8 @@ class Repository:
                 "discovering": "Каталог",
                 "detail": "Карточка",
                 "contacts": "Контакты",
+                "kpp": "КПП",
+                "backfill_revenue": "Дозаполнение выручки",
             }.get(stage, "Проверка")
             session.add(Event(job_id=job_id, message=f"{label}: {error}"))
 
@@ -388,7 +445,12 @@ class Repository:
                 .select_from(Company)
                 .where(
                     Company.job_id == job_id,
-                    or_(Company.detail_status == "pending", Company.contacts_status == "pending"),
+                    or_(
+                        Company.detail_status == "pending",
+                        Company.contacts_status == "pending",
+                        Company.kpp_status == "pending",
+                        Company.revenue_status == "pending",
+                    ),
                 )
             )
             if pending:
@@ -447,6 +509,14 @@ class Repository:
                 "pending": pending,
                 "remaining": total - done,
                 "errors": errors,
+                "fields_pending": await session.scalar(
+                    select(func.count())
+                    .select_from(Company)
+                    .where(
+                        condition,
+                        or_(Company.kpp_status == "pending", Company.revenue_status == "pending"),
+                    )
+                ),
                 "average_seconds": avg,
                 "eta_seconds": avg * pending if avg and job["timed_companies"] >= 5 else None,
                 "events": [snapshot(event) for event in events],
@@ -474,6 +544,8 @@ class Repository:
                     or_(
                         Company.detail_status.in_(["error", "not_found"]),
                         Company.contacts_status.in_(["error", "not_found"]),
+                        Company.kpp_status.in_(["error", "not_found"]),
+                        Company.revenue_status == "error",
                         Company.inn_conflict.is_(True),
                         Company.id.in_(
                             select(Issue.company_id).where(

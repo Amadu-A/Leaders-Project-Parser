@@ -16,8 +16,6 @@ class Settings(BaseSettings):
     postgres_db: str = "leaders_parser"
     postgres_user: str = "leaders_parser"
     postgres_password: SecretStr = SecretStr("")
-    app_username: str = "operator"
-    app_password: SecretStr = SecretStr("")
     source_url: str = "https://leaders-project.ru/companies/projecting?size=100"
     user_agent: str = "LeadersProjectParser/0.1 (+public company catalogue)"
     source_mode: str = "auto"

@@ -60,7 +60,14 @@ async def run():
 
             limiter = RateLimiter(settings, repository, checkpoint)
             source = PublicSource(settings, HttpClient(settings, limiter, cooldown))
-            collector = Collector(repository, source, pages, checkpoint, probe_count=3)
+            collector = Collector(
+                repository,
+                source,
+                pages,
+                checkpoint,
+                probe_count=3,
+                catalogue_url=settings.source_url,
+            )
 
             async def heartbeat():
                 """Поддерживает healthcheck во время долгих пауз, не делает запросов к сайту."""
