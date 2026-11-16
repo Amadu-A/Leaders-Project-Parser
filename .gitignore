@@ -1,3 +1,9 @@
+# .gitignore
+# Секреты, кэш браузерных бинарников и локальные результаты не включаются в Git.
+.cache/
+*.xlsx
+*.log
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]

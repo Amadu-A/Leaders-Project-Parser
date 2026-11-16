@@ -1,0 +1,20 @@
+<!doctype html>
+<!-- app/web/templates/base.html: общий каркас, локальные ресурсы и доступная навигация. -->
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>Leaders Project Parser</title>
+  <link rel="stylesheet" href="/static/css/style.css">
+  <script type="module" src="/static/js/dashboard.js"></script>
+</head>
+<body class="page" data-poll-seconds="{{ poll_seconds }}">
+  <header class="header">
+    <a class="header__brand" href="/" aria-label="Leaders Project Parser — главная"><span class="header__mark" aria-hidden="true">L<span>↗</span></span>LEADERS <span class="header__muted">/ DATA TOOLS</span></a>
+    <a class="header__source" href="{{ source_url }}" target="_blank" rel="noopener noreferrer">Открыть источник ↗</a>
+  </header>
+  <main class="page__main">{% block content %}{% endblock %}</main>
+  <footer class="page__footer"><span>Leaders Project Parser</span><span>Срок хранения после завершения: {{ retention_days }} дн.</span></footer>
+</body>
+</html>

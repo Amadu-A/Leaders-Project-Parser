@@ -1,0 +1,17 @@
+# .dockerignore
+# В build context не входят credentials, runtime-данные и локальные окружения.
+.git
+.env
+.env.*
+!.env.example
+.venv
+.cache
+.pytest_cache
+.ruff_cache
+__pycache__
+*.egg-info
+*.xlsx
+examples
+tests
+docs
+scripts

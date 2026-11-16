@@ -1,0 +1,36 @@
+<!-- app/web/templates/index.html: мониторинг одного задания; компании приходят страницами через API. -->
+{% extends "base.html" %}
+{% block content %}
+<section class="intro" aria-labelledby="page-title">
+  <div><p class="intro__eyebrow">КАТАЛОГ ОРГАНИЗАЦИЙ</p><h1 class="intro__title" id="page-title">Leaders Project Parser</h1><p class="intro__description">Все компании, руководители и контакты — в одной Excel-таблице.</p></div>
+  <button class="button button--primary" type="button" data-action="start"><span aria-hidden="true">＋</span> Начать сбор</button>
+</section>
+<p class="notice notice--error" data-notification role="alert" hidden></p>
+<section class="panel collection" aria-labelledby="collection-title">
+  <div class="collection__heading"><h2 id="collection-title">Состояние сбора</h2><span class="badge" data-status role="status" aria-live="polite">Готов к запуску</span></div>
+  <div class="collection__stage"><span class="collection__indicator" aria-hidden="true"></span><strong data-stage>Начните новое задание</strong><span class="collection__hint" data-last-success>Сбор продолжится, даже если закрыть вкладку</span></div>
+  <progress class="collection__progress" data-progress max="100" value="0" aria-label="Прогресс обработки компаний"></progress>
+  <div class="collection__meta"><span data-progress-label>Ожидание запуска</span><span data-eta>Оставшееся время появится после первых 5 организаций</span></div>
+  <p class="notice" data-job-error hidden></p>
+  <div class="collection__controls">
+    <div class="collection__buttons"><button class="button" type="button" data-action="pause" disabled>Ⅱ Пауза</button><button class="button" type="button" data-action="resume" disabled>▷ Продолжить</button><button class="button button--quiet" type="button" data-action="cancel" disabled>Остановить</button></div>
+    <div class="collection__buttons"><button class="button" type="button" data-action="retry-failed" hidden>Повторить ошибки</button><a class="button button--primary" data-download hidden>↓ Скачать Excel</a></div>
+  </div>
+</section>
+<section class="metrics" aria-label="Показатели задания">
+  {% for key, label in [('found','Найдено организаций'), ('processed','Полностью обработано'), ('remaining','Осталось'), ('errors','Ошибок')] %}
+  <article class="metric"><h2 class="metric__label">{{ label }}</h2><p class="metric__value" data-metric="{{ key }}">—</p></article>
+  {% endfor %}
+  <article class="metric"><h2 class="metric__label">Время на организацию</h2><p class="metric__value metric__value--small" data-average>—</p></article>
+</section>
+<section class="panel results" aria-labelledby="results-title">
+  <div class="results__heading"><div><h2 id="results-title">Организации</h2><p class="results__hint">Последние обновлённые карточки · <span data-table-count>0</span> записей</p></div>
+    <form class="search" data-search-form role="search"><label class="search__label" for="company-search">Поиск по названию или ИНН</label><input class="search__input" id="company-search" name="q" type="search" placeholder="Название компании или ИНН" maxlength="200"><label class="search__filter"><input type="checkbox" data-errors-only> Только с ошибками</label></form>
+  </div>
+  <div class="results__scroll"><table class="table"><caption class="page__sr-only">Найденные компании и статусы их обработки</caption><thead><tr><th scope="col">№</th><th scope="col">Наименование</th><th scope="col">ИНН</th><th scope="col">Руководитель</th><th scope="col">Статус</th><th scope="col"><span class="page__sr-only">Контакты и ошибки</span></th></tr></thead><tbody data-companies><tr><td class="table__empty" colspan="6">Здесь появятся найденные организации</td></tr></tbody></table></div>
+  <nav class="pagination" aria-label="Страницы организаций"><span data-page-label>Страница 1 из 1</span><div class="pagination__buttons"><button class="button button--small" type="button" data-prev disabled>← Назад</button><button class="button button--small" type="button" data-next disabled>Вперёд →</button></div></nav>
+</section>
+<section class="panel journal" aria-labelledby="journal-title"><div class="journal__heading"><h2 id="journal-title">Журнал событий</h2><span class="journal__hint">Автообновление каждые {{ poll_seconds|int }} с</span></div><ol class="journal__list" data-events><li class="journal__empty">Событий пока нет</li></ol></section>
+<div class="cleanup"><span data-job-id></span><button class="button button--danger" type="button" data-action="delete" hidden>Удалить данные задания</button></div>
+<dialog class="details" data-details aria-labelledby="details-title"><div class="details__heading"><h2 id="details-title" data-details-title>Организация</h2><button class="button button--small" type="button" data-close-details aria-label="Закрыть контакты">✕</button></div><div data-details-content></div></dialog>
+{% endblock %}

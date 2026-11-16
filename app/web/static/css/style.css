@@ -1,0 +1,6 @@
+/* app/web/static/css/style.css: единственная точка подключения модульных стилей. */
+@import url("./base.css");
+@import url("./blocks/layout.css");
+@import url("./blocks/collection.css");
+@import url("./blocks/table.css");
+@import url("./blocks/details.css");

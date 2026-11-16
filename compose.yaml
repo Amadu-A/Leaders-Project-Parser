@@ -1,0 +1,111 @@
+# compose.yaml
+# Изолированный stack из трёх контейнеров; shared-infrastructure не используется.
+name: leaders-project-parser
+
+x-app: &app
+  image: leaders-project-parser:local
+  build: .
+  init: true
+  restart: unless-stopped
+  stop_grace_period: 90s
+  env_file:
+    - path: .env.example
+    - path: .env
+      required: true
+  environment:
+    POSTGRES_HOST: leaders-parser-postgres
+    POSTGRES_DB: ${POSTGRES_DB:-leaders_parser}
+    POSTGRES_USER: ${POSTGRES_USER:-leaders_parser}
+    POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    APP_PASSWORD: ${APP_PASSWORD:?Set APP_PASSWORD in .env}
+    APP_USERNAME: ${APP_USERNAME:-operator}
+    DATABASE_URL: ${DATABASE_URL:-}
+    SOURCE_URL: ${SOURCE_URL:-https://leaders-project.ru/companies/projecting?size=100}
+    SOURCE_MODE: ${SOURCE_MODE:-auto}
+    SOURCE_API_ACCESS_APPROVED: ${SOURCE_API_ACCESS_APPROVED:-true}
+    USER_AGENT: ${USER_AGENT:-LeadersProjectParser/0.1}
+    REQUEST_MIN_DELAY: ${REQUEST_MIN_DELAY:-7}
+    REQUEST_MAX_DELAY: ${REQUEST_MAX_DELAY:-12}
+    HTTP_CONNECT_TIMEOUT: ${HTTP_CONNECT_TIMEOUT:-10}
+    HTTP_READ_TIMEOUT: ${HTTP_READ_TIMEOUT:-30}
+    HTTP_POOL_TIMEOUT: ${HTTP_POOL_TIMEOUT:-10}
+    HTTP_TOTAL_TIMEOUT: ${HTTP_TOTAL_TIMEOUT:-45}
+    MAX_RETRIES: ${MAX_RETRIES:-3}
+    MAX_CONCURRENCY: ${MAX_CONCURRENCY:-1}
+    RATE_LIMIT_COOLDOWN: ${RATE_LIMIT_COOLDOWN:-1800}
+    STATUS_POLL_INTERVAL: ${STATUS_POLL_INTERVAL:-5}
+    BROWSER_RENDER_TIMEOUT: ${BROWSER_RENDER_TIMEOUT:-1800}
+    RETENTION_DAYS: ${RETENTION_DAYS:-7}
+    LOG_LEVEL: ${LOG_LEVEL:-INFO}
+  networks: [private]
+  read_only: true
+  tmpfs:
+    - /tmp:rw,nosuid,nodev,size=512m,mode=1777
+  security_opt: [no-new-privileges:true]
+  cap_drop: [ALL]
+  pids_limit: 256
+  logging: &logging
+    driver: local
+    options:
+      max-size: "10m"
+      max-file: "5"
+
+services:
+  leaders-parser-api:
+    <<: *app
+    command: ["sh", "-c", "alembic upgrade head && exec uvicorn app.api.main:app --host 0.0.0.0 --port 8000 --no-access-log"]
+    ports:
+      - "${APP_BIND_IP:-127.0.0.1}:${APP_PORT:-8089}:8000"
+    mem_limit: 1g
+    cpus: 2.0
+    depends_on:
+      leaders-parser-postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/ready', timeout=5)"]
+      interval: 15s
+      timeout: 8s
+      retries: 5
+      start_period: 30s
+
+  leaders-parser-worker:
+    <<: *app
+    command: ["python", "-m", "app.worker"]
+    mem_limit: 2g
+    cpus: 2.0
+    shm_size: 256m
+    depends_on:
+      leaders-parser-api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-m", "app.infrastructure.database.worker_health"]
+      interval: 20s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  leaders-parser-postgres:
+    image: postgres:16.15-alpine
+    restart: unless-stopped
+    stop_grace_period: 60s
+    mem_limit: 512m
+    cpus: 1.0
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-leaders_parser}
+      POSTGRES_USER: ${POSTGRES_USER:-leaders_parser}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    volumes: [postgres-data:/var/lib/postgresql/data]
+    networks: [private]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    logging: *logging
+
+networks:
+  private:
+    driver: bridge
+
+volumes:
+  postgres-data:
